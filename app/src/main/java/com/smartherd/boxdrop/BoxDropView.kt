@@ -18,111 +18,6 @@ import org.jbox2d.dynamics.World
 import kotlin.math.abs
 import kotlin.random.Random
 
-//class BoxDropView @JvmOverloads constructor(
-//    context: Context, attrs: AttributeSet? = null
-//) : View(context, attrs) {
-//
-//    private val boxes = mutableListOf<Box>()
-//    private val paint = Paint()
-//    private var stackLimit = 8 // Set a limit for the stack height
-//
-//    init {
-//        paint.style = Paint.Style.FILL
-//    }
-//
-//    override fun onDraw(canvas: Canvas) {
-//        super.onDraw(canvas)
-//
-//        // Draw all boxes
-//        for (box in boxes) {
-//            paint.color = box.color
-//            canvas.drawRect(box.x, box.y, box.x + box.size, box.y + box.size, paint)
-//        }
-//    }
-//
-//    override fun onTouchEvent(event: MotionEvent?): Boolean {
-//        if (event?.action == MotionEvent.ACTION_DOWN) {
-//            // Add a new box at the top of the screen
-//            val newBox = Box(event.x - 50f, 0f, randomColor(), 100f)
-//            boxes.add(newBox)
-//
-//            // Start the drop animation for the new box
-//            startDropAnimation(newBox)
-//            return true
-//        }
-//        return super.onTouchEvent(event)
-//    }
-//
-//    private fun startDropAnimation(box: Box) {
-//        val animator = ValueAnimator.ofFloat(0f, height.toFloat() - box.size)
-//        animator.duration = 2000
-//        animator.addUpdateListener { animation ->
-//            val newY = animation.animatedValue as Float
-//
-//            // Check if the box collides with the top of the previous box to stack
-//            val collidingBox = getCollidingBox(box)
-//            if (collidingBox != null && newY + box.size >= collidingBox.y) {
-//                // Stop the animation and stack the box on top of the previous one
-//                box.y = collidingBox.y - box.size
-//                animator.cancel()
-//
-//                // Check if the stack height limit is reached
-//                if (boxes.size >= stackLimit) {
-//                    scatterBoxes()
-//                }
-//            } else {
-//                // Continue dropping
-//                box.y = newY
-//            }
-//            invalidate()
-//        }
-//        animator.start()
-//    }
-//
-//    private fun getCollidingBox(box: Box): Box? {
-//        // Look for a box that is directly below the current box
-//        for (existingBox in boxes) {
-//            if (existingBox != box &&
-//                abs(existingBox.x - box.x) < box.size &&
-//                box.y + box.size <= existingBox.y
-//            ) {
-//                return existingBox
-//            }
-//        }
-//        return null
-//    }
-//
-//    private fun scatterBoxes() {
-//        val scatteredBoxes = boxes.toList() // Create a snapshot of current boxes for scattering
-//
-//        for (box in scatteredBoxes) {
-//            // Apply a random scatter effect (e.g., random velocity)
-//            val scatterAnimator = ValueAnimator.ofFloat(0f, 500f)
-//            scatterAnimator.duration = 1000
-//            val velocityX = Random.nextInt(-10, 10).toFloat()
-//            val velocityY = Random.nextInt(-20, -5).toFloat()
-//
-//            scatterAnimator.addUpdateListener { animation ->
-//                val progress = animation.animatedFraction
-//                box.x += velocityX * progress
-//                box.y += velocityY * progress
-//                invalidate()
-//            }
-//            scatterAnimator.start()
-//        }
-//
-//        // Clear only after all animations finish
-//        postDelayed({
-//            boxes.clear()
-//        }, 1000)
-//    }
-//
-//    private fun randomColor(): Int {
-//        return Color.rgb(Random.nextInt(256), Random.nextInt(256), Random.nextInt(256))
-//    }
-//
-//    data class Box(var x: Float, var y: Float, val color: Int, val size: Float)
-//}
 
 
 class BoxDropView @JvmOverloads constructor(
@@ -132,11 +27,15 @@ class BoxDropView @JvmOverloads constructor(
     private val boxes = mutableListOf<Body>()
     private val paint = Paint()
     private val world: World
-    private val boxSize = 50f
+    private val boxSize = 100f
     private val timeStep = 1.0f / 60.0f  // 60 frames per second
     private val velocityIterations = 6
     private val positionIterations = 2
     private var groundBody: Body? = null
+    private var groundRemoved = false // Tracks whether the ground has been removed
+    private var removeThreshold = height * 0.2f // The height threshold to remove ground
+    private var restoreThreshold = height * 0.8f // The height threshold to restore ground
+
 
     init {
         // Initialize Box2D world with gravity
@@ -150,6 +49,9 @@ class BoxDropView @JvmOverloads constructor(
         // Step the physics world
         world.step(timeStep, velocityIterations, positionIterations)
 
+        // Track the highest box
+        var highestBoxY = height.toFloat()
+
         // Draw all boxes
         for (box in boxes) {
             val position = box.position
@@ -161,10 +63,36 @@ class BoxDropView @JvmOverloads constructor(
                 position.y * boxSize + boxSize / 2,
                 paint
             )
+            // Track the highest Y position
+            highestBoxY = minOf(highestBoxY, position.y * boxSize)
+        }
+
+        // Check if we need to remove or restore the ground
+        if (highestBoxY <= removeThreshold && !groundRemoved) {
+            removeGround() // Open the ground
+        } else if (highestBoxY >= restoreThreshold && groundRemoved) {
+            restoreGround() // Close the ground
         }
 
         // Redraw at 60 FPS
         invalidate()
+    }
+
+    // Method to remove the ground
+    private fun removeGround() {
+        if (groundBody != null) {
+            world.destroyBody(groundBody) // Remove the ground
+            groundBody = null
+            groundRemoved = true // Mark ground as removed
+        }
+    }
+
+    // Method to restore the ground
+    private fun restoreGround() {
+        if (groundBody == null) {
+            createGround(width, height) // Recreate the ground
+            groundRemoved = false // Mark ground as restored
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
@@ -207,21 +135,57 @@ class BoxDropView @JvmOverloads constructor(
         createGround(w, h)
     }
 
-    private fun createGround(width: Int, height: Int) {
-        if (groundBody != null) {
-            world.destroyBody(groundBody) // Destroy previous ground, if any
-        }
-
-        val groundBodyDef = BodyDef()
-        // Position the ground at the bottom of the screen
-        groundBodyDef.position.set(width / 2f / boxSize, height / boxSize)
-        groundBody = world.createBody(groundBodyDef)
-
-        val groundShape = PolygonShape()
-        // Set the ground to be as wide as the screen
-        groundShape.setAsBox(width.toFloat() / boxSize, 0.5f)
-
-        groundBody!!.createFixture(groundShape, 0.0f)  // Static body, so no density
+//    private fun createGround(width: Int, height: Int) {
+//        if (groundBody != null) {
+//            world.destroyBody(groundBody) // Destroy previous ground, if any
+//        }
+//
+//        val groundBodyDef = BodyDef()
+//        // Position the ground at the bottom of the screen
+//        groundBodyDef.position.set(width / 2f / boxSize, height / boxSize)
+//        groundBody = world.createBody(groundBodyDef)
+//
+//        val groundShape = PolygonShape()
+//        // Set the ground to be as wide as the screen
+//        groundShape.setAsBox(width.toFloat() / boxSize, 0.5f)
+//
+//        groundBody!!.createFixture(groundShape, 0.0f)  // Static body, so no density
+//    }
+private fun createGround(width: Int, height: Int) {
+    if (groundBody != null) {
+        world.destroyBody(groundBody) // Destroy previous ground, if any
     }
+
+    // Create ground at the bottom of the screen
+    val groundBodyDef = BodyDef()
+    groundBodyDef.position.set(width / 2f / boxSize, height / boxSize)
+    groundBody = world.createBody(groundBodyDef)
+
+    val groundShape = PolygonShape()
+    groundShape.setAsBox(width.toFloat() / boxSize, 0.5f) // Wide ground
+
+    groundBody!!.createFixture(groundShape, 0.0f)  // Static body for the ground
+
+    // Create left boundary
+    val leftWallBodyDef = BodyDef()
+    leftWallBodyDef.position.set(0f, height / 2f / boxSize)  // Left side at x = 0
+    val leftWallBody = world.createBody(leftWallBodyDef)
+
+    val leftWallShape = PolygonShape()
+    leftWallShape.setAsBox(0.5f, height.toFloat() / boxSize) // Tall wall on the left
+
+    leftWallBody.createFixture(leftWallShape, 0.0f)  // Static body for left wall
+
+    // Create right boundary
+    val rightWallBodyDef = BodyDef()
+    rightWallBodyDef.position.set(width.toFloat() / boxSize, height / 2f / boxSize)  // Right side at x = width
+    val rightWallBody = world.createBody(rightWallBodyDef)
+
+    val rightWallShape = PolygonShape()
+    rightWallShape.setAsBox(0.5f, height.toFloat() / boxSize) // Tall wall on the right
+
+    rightWallBody.createFixture(rightWallShape, 0.0f)  // Static body for right wall
+}
+
 }
 
